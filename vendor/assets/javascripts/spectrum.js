@@ -1,4 +1,4 @@
-// Spectrum Colorpicker v1.6.2
+// Spectrum Colorpicker v1.8.0
 // https://github.com/bgrins/spectrum
 // Author: Brian Grinstead
 // License: MIT
@@ -10,7 +10,7 @@
         define(['jquery'], factory);
     }
     else if (typeof exports == "object" && typeof module == "object") { // CommonJS
-        module.exports = factory;
+        module.exports = factory(require('jquery'));
     }
     else { // Browser
         factory(jQuery);
@@ -33,7 +33,7 @@
         showInput: false,
         allowEmpty: false,
         showButtons: true,
-        clickoutFiresChange: false,
+        clickoutFiresChange: true,
         showInitial: false,
         showPalette: false,
         showPaletteOnly: false,
@@ -185,6 +185,7 @@
             callbacks = opts.callbacks,
             resize = throttle(reflow, 10),
             visible = false,
+            isDragging = false,
             dragWidth = 0,
             dragHeight = 0,
             dragHelperHeight = 0,
@@ -233,8 +234,7 @@
             previewElement = replacer.find(".sp-preview-inner"),
             initialColor = opts.color || (isInput && boundElement.val()),
             colorOnShow = false,
-            preferredFormat = opts.preferredFormat,
-            currentPreferredFormat = preferredFormat,
+            currentPreferredFormat = opts.preferredFormat,
             clickoutFiresChange = !opts.showButtons || opts.clickoutFiresChange,
             isEmpty = !initialColor,
             allowEmpty = opts.allowEmpty && !isInputTypeColor;
@@ -442,7 +442,7 @@
                 // In case color was black - update the preview UI and set the format
                 // since the set function will not run (default color is black).
                 updateUI();
-                currentPreferredFormat = preferredFormat || tinycolor(initialColor).format;
+                currentPreferredFormat = opts.preferredFormat || tinycolor(initialColor).format;
 
                 addColorToSelectionPalette(initialColor);
             }
@@ -562,12 +562,14 @@
             if (dragHeight <= 0 || dragWidth <= 0 || slideHeight <= 0) {
                 reflow();
             }
+            isDragging = true;
             container.addClass(draggingClass);
             shiftMovementDirection = null;
             boundElement.trigger('dragstart.spectrum', [ get() ]);
         }
 
         function dragStop() {
+            isDragging = false;
             container.removeClass(draggingClass);
             boundElement.trigger('dragstop.spectrum', [ get() ]);
         }
@@ -618,6 +620,7 @@
             hideAll();
             visible = true;
 
+            $(doc).bind("keydown.spectrum", onkeydown);
             $(doc).bind("click.spectrum", clickout);
             $(window).bind("resize.spectrum", resize);
             replacer.addClass("sp-active");
@@ -633,9 +636,20 @@
             boundElement.trigger('show.spectrum', [ colorOnShow ]);
         }
 
+        function onkeydown(e) {
+            // Close on ESC
+            if (e.keyCode === 27) {
+                hide();
+            }
+        }
+
         function clickout(e) {
             // Return on right click.
             if (e.button == 2) { return; }
+
+            // If a drag event was happening during the mouseup, don't hide
+            // on click.
+            if (isDragging) { return; }
 
             if (clickoutFiresChange) {
                 updateOriginalInput(true);
@@ -651,6 +665,7 @@
             if (!visible || flat) { return; }
             visible = false;
 
+            $(doc).unbind("keydown.spectrum", onkeydown);
             $(doc).unbind("click.spectrum", clickout);
             $(window).unbind("resize.spectrum", resize);
 
@@ -689,7 +704,7 @@
             updateUI();
 
             if (newColor && newColor.isValid() && !ignoreFormatChange) {
-                currentPreferredFormat = preferredFormat || newColor.getFormat();
+                currentPreferredFormat = opts.preferredFormat || newColor.getFormat();
             }
         }
 
@@ -862,6 +877,9 @@
         }
 
         function reflow() {
+            if (!visible) {
+                return; // Calculations would be useless and wouldn't be reliable anyways
+            }
             dragWidth = dragger.width();
             dragHeight = dragger.height();
             dragHelperHeight = dragHelper.height();
@@ -906,6 +924,10 @@
             }
 
             opts[optionName] = optionValue;
+
+            if (optionName === "preferredFormat") {
+                currentPreferredFormat = opts.preferredFormat;
+            }
             applyOptions();
         }
 
@@ -1072,9 +1094,7 @@
                     $(doc).bind(duringDragEvents);
                     $(doc.body).addClass("sp-dragging");
 
-                    if (!hasTouch) {
-                        move(e);
-                    }
+                    move(e);
 
                     prevent(e);
                 }
@@ -1085,7 +1105,12 @@
             if (dragging) {
                 $(doc).unbind(duringDragEvents);
                 $(doc.body).removeClass("sp-dragging");
-                onstop.apply(element, arguments);
+
+                // Wait a tick before notifying observers to allow the click event
+                // to fire in Chrome.
+                setTimeout(function() {
+                    onstop.apply(element, arguments);
+                }, 0);
             }
             dragging = false;
         }
@@ -1165,8 +1190,8 @@
     $.fn.spectrum.defaults = defaultOpts;
     $.fn.spectrum.inputTypeColorSupport = function inputTypeColorSupport() {
         if (typeof inputTypeColorSupport._cachedResult === "undefined") {
-            var colorInput = $("<input type='color' value='!' />")[0];
-            inputTypeColorSupport._cachedResult = colorInput.type === "color" && colorInput.value !== "!";
+            var colorInput = $("<input type='color'/>")[0]; // if color element is supported, value will default to not null
+            inputTypeColorSupport._cachedResult = colorInput.type === "color" && colorInput.value !== "";
         }
         return inputTypeColorSupport._cachedResult;
     };
